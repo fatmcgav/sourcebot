@@ -7,6 +7,35 @@ import { createLogger } from "@sourcebot/shared";
 
 const logger = createLogger('generate-pr-review');
 
+const MAX_CONCURRENT_FILE_REVIEWS = 5;
+
+/**
+ * Runs tasks with a bounded concurrency limit, returning results in the same
+ * order as the input array and using the same PromiseSettledResult shape as
+ * Promise.allSettled.
+ */
+async function withConcurrencyLimit<T>(
+    tasks: Array<() => Promise<T>>,
+    limit: number,
+): Promise<PromiseSettledResult<T>[]> {
+    const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+    let nextIndex = 0;
+
+    async function worker() {
+        while (nextIndex < tasks.length) {
+            const index = nextIndex++;
+            try {
+                results[index] = { status: 'fulfilled', value: await tasks[index]() };
+            } catch (reason) {
+                results[index] = { status: 'rejected', reason };
+            }
+        }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+    return results;
+}
+
 export const generatePrReviews = async (reviewAgentLogFileName: string | undefined, pr_payload: sourcebot_pr_payload, rules: string[], modelOverride?: string, contextFiles?: string): Promise<sourcebot_file_diff_review[]> => {
     logger.debug("Executing generate_pr_reviews");
 
@@ -36,9 +65,9 @@ export const generatePrReviews = async (reviewAgentLogFileName: string | undefin
         return result.value !== null ? [result.value] : [];
     });
 
-    // Per-file review — one LLM call per file, parallelised across files.
-    const fileResults = await Promise.allSettled(
-        pr_payload.file_diffs.map(async (file_diff) => {
+    // Per-file review — one LLM call per file, parallelised with a concurrency cap.
+    const fileResults = await withConcurrencyLimit(
+        pr_payload.file_diffs.map((file_diff) => async () => {
             const fileContentContext = await fetchFileContent(pr_payload, file_diff.to);
             const context: sourcebot_context[] = [
                 {
@@ -68,7 +97,8 @@ export const generatePrReviews = async (reviewAgentLogFileName: string | undefin
                 oldFilename: file_diff.from,
                 reviews: diffReview.reviews,
             } satisfies sourcebot_file_diff_review;
-        })
+        }),
+        MAX_CONCURRENT_FILE_REVIEWS,
     );
 
     const file_diff_reviews: sourcebot_file_diff_review[] = [];
