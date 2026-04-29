@@ -1,7 +1,8 @@
-import { sourcebot_pr_payload, sourcebot_diff_review, sourcebot_file_diff_review, sourcebot_context } from "@/features/agents/review-agent/types";
+import { sourcebot_pr_payload, sourcebot_file_diff_review, sourcebot_context } from "@/features/agents/review-agent/types";
 import { generateDiffReviewPrompt } from "@/features/agents/review-agent/nodes/generateDiffReviewPrompt";
 import { invokeDiffReviewLlm } from "@/features/agents/review-agent/nodes/invokeDiffReviewLlm";
 import { fetchContextFile, fetchFileContent } from "@/features/agents/review-agent/nodes/fetchFileContent";
+import { generateMrSummary } from "@/features/agents/review-agent/nodes/generateMrSummary";
 import { createLogger } from "@sourcebot/shared";
 
 const logger = createLogger('generate-pr-review');
@@ -9,13 +10,25 @@ const logger = createLogger('generate-pr-review');
 export const generatePrReviews = async (reviewAgentLogFileName: string | undefined, pr_payload: sourcebot_pr_payload, rules: string[], modelOverride?: string, contextFiles?: string): Promise<sourcebot_file_diff_review[]> => {
     logger.debug("Executing generate_pr_reviews");
 
-    // Parse comma- or whitespace-separated list and fetch all files once per PR.
+    // Parse comma- or whitespace-separated list and fetch all context once per PR.
     const contextFilePaths = contextFiles
         ? contextFiles.split(/[\s,]+/).map((p) => p.trim()).filter(Boolean)
         : [];
-    const repoInstructionsContexts = (
-        await Promise.allSettled(contextFilePaths.map((p) => fetchContextFile(pr_payload, p)))
-    ).flatMap((result) => {
+
+    // Run MR summary + all context file fetches in parallel upfront.
+    const [mrSummaryResult, ...contextFileResults] = await Promise.allSettled([
+        generateMrSummary(pr_payload, modelOverride),
+        ...contextFilePaths.map((p) => fetchContextFile(pr_payload, p)),
+    ]);
+
+    const mrSummaryContext: sourcebot_context[] = [];
+    if (mrSummaryResult.status === 'fulfilled' && mrSummaryResult.value !== null) {
+        mrSummaryContext.push(mrSummaryResult.value);
+    } else if (mrSummaryResult.status === 'rejected') {
+        logger.warn(`MR summary generation failed: ${mrSummaryResult.reason}`);
+    }
+
+    const repoInstructionsContexts = contextFileResults.flatMap((result) => {
         if (result.status === 'rejected') {
             logger.warn(`Unexpected error fetching context file: ${result.reason}`);
             return [];
@@ -23,43 +36,47 @@ export const generatePrReviews = async (reviewAgentLogFileName: string | undefin
         return result.value !== null ? [result.value] : [];
     });
 
-    const file_diff_reviews: sourcebot_file_diff_review[] = [];
-    for (const file_diff of pr_payload.file_diffs) {
-        const reviews: sourcebot_diff_review[] = [];
+    // Per-file review — one LLM call per file, parallelised across files.
+    const fileResults = await Promise.allSettled(
+        pr_payload.file_diffs.map(async (file_diff) => {
+            const fileContentContext = await fetchFileContent(pr_payload, file_diff.to);
+            const context: sourcebot_context[] = [
+                {
+                    type: "pr_title",
+                    description: "The title of the pull request",
+                    context: pr_payload.title,
+                },
+                {
+                    type: "pr_description",
+                    description: "The description of the pull request",
+                    context: pr_payload.description,
+                },
+                fileContentContext,
+                ...mrSummaryContext,
+                ...repoInstructionsContexts,
+            ];
 
-        for (const diff of file_diff.diffs) {
-            try {
-                const fileContentContext = await fetchFileContent(pr_payload, file_diff.to);
-                const context: sourcebot_context[] = [
-                    {
-                        type: "pr_title",
-                        description: "The title of the pull request",
-                        context: pr_payload.title,
-                    },
-                    {
-                        type: "pr_description",
-                        description: "The description of the pull request",
-                        context: pr_payload.description,
-                    },
-                    fileContentContext,
-                    ...repoInstructionsContexts,
-                ];
+            const prompt = await generateDiffReviewPrompt(file_diff.diffs, context, rules);
+            const diffReview = await invokeDiffReviewLlm(reviewAgentLogFileName, prompt, modelOverride);
 
-                const prompt = await generateDiffReviewPrompt(diff, context, rules);
-
-                const diffReview = await invokeDiffReviewLlm(reviewAgentLogFileName, prompt, modelOverride);
-                reviews.push(...diffReview.reviews);
-            } catch (error) {
-                logger.error(`Error generating review for ${file_diff.to}: ${error}`);
+            if (diffReview.reviews.length === 0) {
+                return null;
             }
-        }
-        
-        if (reviews.length > 0) {
-            file_diff_reviews.push({
+
+            return {
                 filename: file_diff.to,
                 oldFilename: file_diff.from,
-                reviews: reviews,
-            });
+                reviews: diffReview.reviews,
+            } satisfies sourcebot_file_diff_review;
+        })
+    );
+
+    const file_diff_reviews: sourcebot_file_diff_review[] = [];
+    for (const result of fileResults) {
+        if (result.status === 'rejected') {
+            logger.error(`Error generating review: ${result.reason}`);
+        } else if (result.value !== null) {
+            file_diff_reviews.push(result.value);
         }
     }
 
