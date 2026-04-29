@@ -248,7 +248,7 @@ export const POST = async (request: NextRequest) => {
                 ? await resolveGitHubAgentConfig(repoId, codeHostUrl)
                 : null;
 
-            if (comment === `/${getReviewCommand(config)}`) {
+            if (comment === `${getReviewCommand(config)}`) {
                 logger.info('Review agent review command received, processing');
 
                 if (!body.installation) {
