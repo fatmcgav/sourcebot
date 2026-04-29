@@ -6,15 +6,15 @@ import { CheckCircle2, Copy } from "lucide-react";
 import { useCallback, useState } from "react";
 
 interface CopyIconButtonProps {
-    onCopy: () => boolean;
+    onCopy: () => boolean | Promise<boolean>;
     className?: string;
 }
 
 export const CopyIconButton = ({ onCopy, className }: CopyIconButtonProps) => {
     const [copied, setCopied] = useState(false);
 
-    const onClick = useCallback(() => {
-        const success = onCopy();
+    const onClick = useCallback(async () => {
+        const success = await onCopy();
         if (success) {
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
