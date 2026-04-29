@@ -326,7 +326,7 @@ export const POST = async (request: NextRequest) => {
             const config = await resolveGitLabAgentConfig(parsed.data.project.id, gitlabCodeHostUrl);
 
             const noteBody = parsed.data.object_attributes.note;
-            if (noteBody === `/${getReviewCommand(config)}`) {
+            if (noteBody === `${getReviewCommand(config)}`) {
                 logger.info('Review agent review command received on GitLab MR, processing');
 
                 const mrPayload: GitLabMergeRequestPayload = {
