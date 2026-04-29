@@ -66,6 +66,7 @@ export const generatePrReviews = async (reviewAgentLogFileName: string | undefin
     });
 
     // Per-file review — one LLM call per file, parallelised with a concurrency cap.
+    logger.debug(`Reviewing ${pr_payload.file_diffs.length} file(s)`);
     const fileResults = await withConcurrencyLimit(
         pr_payload.file_diffs.map((file_diff) => async () => {
             const fileContentContext = await fetchFileContent(pr_payload, file_diff.to);
