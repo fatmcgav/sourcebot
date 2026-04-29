@@ -75,7 +75,7 @@ export const fetchContextFile = async (
     );
 
     if (isServiceError(response)) {
-        logger.info(`Context file '${filePath}' not found or unreadable — skipping`);
+        logger.debug(`Context file '${filePath}' not found or unreadable — skipping`);
         return null;
     }
 
@@ -86,7 +86,7 @@ export const fetchContextFile = async (
     }
 
     const content = parsed.data.source;
-    logger.info(`Fetched context file '${filePath}' (${Buffer.byteLength(content, 'utf8')} bytes)`);
+    logger.debug(`Fetched context file '${filePath}' (${Buffer.byteLength(content, 'utf8')} bytes)`);
     return {
         type: "repo_instructions",
         description: `Repository-level review instructions from ${filePath}`,

@@ -44,7 +44,7 @@ export const generatePrReviews = async (reviewAgentLogFileName: string | undefin
         ? contextFiles.split(/[\s,]+/).map((p) => p.trim()).filter(Boolean)
         : [];
     if (contextFilePaths.length > 0) {
-        logger.info(`Fetching ${contextFilePaths.length} context file(s): ${contextFilePaths.join(', ')}`);
+        logger.debug(`Fetching ${contextFilePaths.length} context file(s): ${contextFilePaths.join(', ')}`);
     }
 
     // Run MR summary + all context file fetches in parallel upfront.
