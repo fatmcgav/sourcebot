@@ -1,8 +1,10 @@
 import { sourcebot_context, sourcebot_pr_payload } from "@/features/agents/review-agent/types";
 import { getAISDKLanguageModelAndOptions, getConfiguredLanguageModels } from "@/features/chat/utils.server";
+import { validateLogPath } from "@/features/agents/review-agent/nodes/invokeDiffReviewLlm";
 import { env } from "@sourcebot/shared";
 import { generateText } from "ai";
 import { createLogger } from "@sourcebot/shared";
+import fs from "fs";
 
 const logger = createLogger('generate-mr-summary');
 
@@ -15,6 +17,7 @@ const logger = createLogger('generate-mr-summary');
  */
 export const generateMrSummary = async (
     pr_payload: sourcebot_pr_payload,
+    reviewAgentLogPath: string | undefined,
     modelOverride?: string,
 ): Promise<sourcebot_context | null> => {
     logger.debug("Executing generate_mr_summary");
@@ -58,6 +61,11 @@ If there are no noteworthy cross-file semantic concerns, respond with an empty s
 
 ${diffSummary}`;
 
+    if (reviewAgentLogPath) {
+        validateLogPath(reviewAgentLogPath);
+        fs.appendFileSync(reviewAgentLogPath, `\n\nMR Summary Prompt:\n${prompt}`);
+    }
+
     try {
         const result = await generateText({
             model,
@@ -68,6 +76,11 @@ ${diffSummary}`;
         });
 
         const summary = result.text.trim();
+
+        if (reviewAgentLogPath) {
+            validateLogPath(reviewAgentLogPath);
+            fs.appendFileSync(reviewAgentLogPath, `\n\nMR Summary Response:\n${summary}`);
+        }
         if (!summary) {
             logger.debug("No cross-file semantic changes detected, skipping summary context");
             return null;

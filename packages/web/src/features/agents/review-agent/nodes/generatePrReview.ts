@@ -46,7 +46,7 @@ export const generatePrReviews = async (reviewAgentLogFileName: string | undefin
 
     // Run MR summary + all context file fetches in parallel upfront.
     const [mrSummaryResult, ...contextFileResults] = await Promise.allSettled([
-        generateMrSummary(pr_payload, modelOverride),
+        generateMrSummary(pr_payload, reviewAgentLogFileName, modelOverride),
         ...contextFilePaths.map((p) => fetchContextFile(pr_payload, p)),
     ]);
 
